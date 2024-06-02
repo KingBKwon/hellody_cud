@@ -5,6 +5,7 @@ from sqlalchemy import *
 engine = engineconn()
 session_maker = engine.sessionmaker()
 
+#vodID 찾기
 def find_vodID(id, title):
     try:
         VOD_ID = session_maker.execute(
