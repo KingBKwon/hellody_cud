@@ -1,13 +1,13 @@
 from fastapi import Request
 from datetime import datetime
 from fastapi.responses import RedirectResponse,JSONResponse
-from spotify_api import use_refresh_token, get_auth_url, get_token_info
-from CRUD.spotify import *
-from routers.mainpage import get_deque
+from app.spotifyAPI.spotify_api import use_refresh_token, get_auth_url, get_token_info
+from app.CRUD.spotify import *
+from app.routers.mainpage import get_deque
 
 d = get_deque()
 
-def login() -> RedirectResponse:
+def login():
     #session = request.session
     #if session.get('access_token'):
     #    return RedirectResponse('/me') 
@@ -17,7 +17,7 @@ def login() -> RedirectResponse:
 
     return auth_url
 
-def handle_callback(request: Request) -> RedirectResponse:
+def handle_callback(request: Request):
     if 'error' in request.query_params:
         return JSONResponse({"error": request.query_params['error']}) 
     if 'code' in request.query_params:
@@ -29,7 +29,7 @@ def handle_callback(request: Request) -> RedirectResponse:
         update_spotify_status(user_id)
         return JSONResponse(content='ok', status_code=200)
 
-def refresh_access_token(user_info:dict) -> RedirectResponse:
+def refresh_access_token(user_info:dict):
     
     if 'REFRESH_TOKEN' not in user_info:
         return RedirectResponse('/login')

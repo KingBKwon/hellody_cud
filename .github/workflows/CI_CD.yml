@@ -1,84 +1,87 @@
-name: Deploy with Docker
+name: fastapi
 
 on:
   push:
-    # 브랜치로 개발하며 완료되면 main 에 머지해 Actions 를 작동
-    branches: [ master ]
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  id-token: write 
+  contents: read  
+
 env:
-  # Docker image 를 ghcr.io 에 올릴 때 우리의github이름/이미지이름 으로 저장한다. 이미지이름을 정해주면 된다.
-  DOCKER_IMAGE: ghcr.io/${{ github.actor }}/neka_server_image
-  VERSION: ${{ github.sha }}
-  NAME: neka_server # 컨테이너 이름
+  AWS_REGION: ap-northeast-2
+  ECR_REPOSITORY: hellody_cud  
+  ECS_SERVICE: hellodyCUDServer  
+  ECS_CLUSTER: hellodyCUDserver                 
+  ECS_TASK_DEFINITION: ./task-definition.json
+  CONTAINER_NAME: hellody_cud
 
 jobs:
   build:
-    name: Build
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-      
-      - name: Setup docker buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v1
-        
-      - name: Cache docker layers
-        uses: actions/cache@v2
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ env.VERSION }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-      - name: Login to ghcr
-        uses: docker/login-action@v1
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_TOKEN }}
-          # ghcr.io 에 접근
+      - name: 체크아웃
+        uses: actions/checkout@v3
 
-      - name: Build and push
-        id: docker_build
-        uses: docker/build-push-action@v2
-        with:
-          builder: ${{ steps.buildx.outputs.name }}
-          push: true
-          tags: ${{ env.DOCKER_IMAGE }}:latest
-          build-args: |
-            CLIENT_ID=${{secrets.CLIENT_ID}}
-            CLIENT_SECRET=${{secrets.CLIENT_SECRET}}
-            AWS_S3_ACCESS_KEY=${{secrets.AWS_S3_ACCESS_KEY}}
-            AWS_S3_SECRET_KEY=${{secrets.AWS_S3_SECRET_KEY}}
-            DATABASE_USERNAME=${{secrets.DATABASE_USERNAME}}
-            DATABASE_PASSWORD=${{secrets.DATABASE_PASSWORD}}
-            DATABASE_HOST=${{secrets.DATABASE_HOST}}
-            DATABASE_NAME=${{secrets.DATABASE_NAME}}
-            DATABASE_PORT=${{secrets.DATABASE_PORT}}
-  
-  deploy:
-    needs: build
-    name: Deploy
-    runs-on: [ self-hosted, label-lets ]
-    # label-newproject 라는 이름으로 AWS EC2 가 Runner 를 작동시킬 때 사용했던 그 label
-    steps:
-      - name: Login to ghcr
-        uses: docker/login-action@v1
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_TOKEN }}
-      
-      - name: Docker run
+      - name: .env 파일 생성
         run: |
-          docker stop ${{ env.NAME }} && docker rm ${{ env.NAME }} && docker rmi ${{ env.DOCKER_IMAGE }}:latest
-          docker run -dit -p 80:80 --name lets_server --restart always ${{ env.DOCKER_IMAGE }}:latest
-          
-          # 첫 줄
-          # 먼저 진행되고 있던 docker 를 stop(멈추고), rm 로 docker 컨테이너를 지우고, rmi 로 docker 이미지를 지운다.
-          # 새롭게 build 된 docker 를 사용하기 위함이다.
-          
-          # 두번째 줄
-          # -d : 백그라운드로
-          # -p : 포트 번호 80번에서 80번으로 접근
-          # --name : docker 이미지 이름을 newproject 로 할거다. 이게 나중에 위에 적은거랑 같아야하는데 왜냐면 첫 줄이랑 같아야 나중에 지워지니까. 확인하자.
+          echo "CLIENT_ID=${{secrets.CLIENT_ID}}" >> .env
+          echo "CLIENT_SECRET=${{secrets.CLIENT_SECRET}}" >> .env
+          echo "DATABASE_USERNAME=${{secrets.DATABASE_USERNAME}}" >> .env
+          echo "DATABASE_PASSWORD=${{secrets.DATABASE_PASSWORD}}" >> .env
+          echo "DATABASE_HOSTAME=${{secrets.DATABASE_HOSTAME}}" >> .env
+          echo "DATABASE_PORT=${{secrets.DATABASE_PORT}}" >> .env
+          echo "DATABASE_NAME=${{secrets.DATABASE_NAME}}" >> .env
+
+      - name: Python 3.10 설정
+        uses: actions/setup-python@v4
+        with: 
+          python-version: '3.10'
+
+      - name: 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Docker Compose 빌드
+        run: docker-compose build
+
+      - name: AWS 자격 증명 설정
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::730335352929:role/fastapicicid
+          role-session-name: sampleSessionName
+          aws-region: ap-northeast-2
+
+      - name: Amazon ECR 로그인
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+        
+      - name: 이미지 빌드, 태그 및 Amazon ECR로 푸시
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Amazon ECS 작업 정의에 새로운 이미지 ID 채우기
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Amazon ECS 작업 정의 배포
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true

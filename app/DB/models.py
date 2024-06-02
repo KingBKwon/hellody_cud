@@ -123,4 +123,3 @@ class EPISODE(Base):
     AIR_DATE = Column(DATE, nullable = True)
     EPISODE_RTM = Column(INT, nullable = True)
     STILL = Column(VARCHAR(255), nullable = True)
-
