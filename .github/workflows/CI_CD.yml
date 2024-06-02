@@ -16,7 +16,7 @@ env:
   ECS_SERVICE: hellodyCUDServer  
   ECS_CLUSTER: hellodyCUDserver                 
   ECS_TASK_DEFINITION: ./task-definition.json
-  CONTAINER_NAME: hellody_cud
+  CONTAINER_NAME: hellodycud
 
 jobs:
   build:
